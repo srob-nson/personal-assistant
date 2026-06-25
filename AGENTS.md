@@ -4,7 +4,7 @@
 
 This repository currently contains a small Python command-line assistant:
 
-- `bin/pa`: executable Python entry point and all application logic.
+- `pa`: executable Python entry point and all application logic.
 - `docs/`: user-facing or design documentation.
 - `tests/`: stdlib `unittest` coverage for CLI behavior that should not contact local services.
 - `profile.md`: optional profile context loaded into assistant prompts.
@@ -14,10 +14,10 @@ There is no separate `src/` or asset tree yet. If the CLI grows, prefer moving r
 
 ## Build, Test, and Development Commands
 
-- `pa "prompt here"`: run the local assistant through the user's shell alias, which points to `$HOME/homelab/personal-assistant/bin/pa`.
-- `bin/pa "prompt here"`: run the executable directly from the repository when the shell alias is unavailable.
+- `pa "prompt here"`: run the local assistant through the user's shell alias, which points to `$HOME/homelab/personal-assistant/pa`.
+- `./pa "prompt here"`: run the executable directly from the repository when the shell alias is unavailable.
 - `pa "review this repository"`: delegate a coding-style prompt to Codex through keyword routing.
-- `python3 -m py_compile bin/pa`: perform a basic syntax check.
+- `python3 -m py_compile pa`: perform a basic syntax check.
 - `python3 -m unittest discover -s tests`: run the automated CLI routing and backend behavior tests with fake backends, without contacting Ollama or Codex.
 
 The script depends on Python 3 and the third-party `requests` package. No lockfile or requirements file is present, so document any new dependencies when adding them.
@@ -33,9 +33,9 @@ Preserve the CLI’s concise output style. User-facing messages should be direct
 Automated tests use Python's stdlib `unittest` under `tests/`. Before committing, at minimum run:
 
 ```sh
-python3 -m py_compile bin/pa
+python3 -m py_compile pa
 python3 -m unittest discover -s tests
-bin/pa --help
+./pa --help
 ```
 
 For CLI behavior changes, manually exercise the affected path where local services are available:
@@ -47,9 +47,9 @@ pa "review this repository"
 
 Useful pre-commit checks to consider:
 
-- `python3 -m py_compile bin/pa`: catches Python syntax errors.
+- `python3 -m py_compile pa`: catches Python syntax errors.
 - `python3 -m unittest discover -s tests`: checks CLI routing and backend behavior with fake backends, without requiring Ollama or Codex.
-- `bin/pa --help`: verifies argument parsing without requiring Ollama or Codex.
+- `./pa --help`: verifies argument parsing without requiring Ollama or Codex.
 - `pa "hello"`: verifies the Ollama route, visible wait indicator, and streaming output.
 - `pa "review this repository"`: verifies the Codex route and startup indicator.
 - `git diff --stat` and `git diff`: review the exact changes before committing.

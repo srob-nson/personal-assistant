@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-PA_PATH = REPO_ROOT / "bin" / "pa"
+PA_PATH = REPO_ROOT / "pa"
 
 
 def load_pa_module():
@@ -108,7 +108,7 @@ class RoutingTests(unittest.TestCase):
             try:
                 pa_module = load_pa_module()
             except ModuleNotFoundError as exc:
-                self.fail(f"bin/pa should load without requests installed: {exc}")
+                self.fail(f"pa should load without requests installed: {exc}")
 
             with patch.object(sys, "argv", ["pa", "--help"]):
                 with redirect_stdout(output):
@@ -140,7 +140,7 @@ class RoutingTests(unittest.TestCase):
             try:
                 pa_module = load_pa_module()
             except ModuleNotFoundError as exc:
-                self.fail(f"bin/pa should load before reporting dependency errors: {exc}")
+                self.fail(f"pa should load before reporting dependency errors: {exc}")
 
             with redirect_stderr(error):
                 try:

@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-PA_PATH = REPO_ROOT / "bin" / "pa"
+PA_PATH = REPO_ROOT / "pa"
 
 
 def load_pa_module():

@@ -9,12 +9,12 @@ pa "prompt here"
 `pa` is configured as a shell alias in `.bashrc` and points to:
 
 ```sh
-$HOME/homelab/personal-assistant/bin/pa
+$HOME/homelab/personal-assistant/pa
 ```
 
 ## Repository Layout
 
-- `bin/pa`: executable Python entry point and all current application logic.
+- `pa`: executable Python entry point and all current application logic.
 - `profile.md`: optional personal profile context loaded into each assistant prompt.
 - `memory.md`: optional longer-term memory context loaded into each assistant prompt.
 - `docs/`: project-local documentation, including usage and routing notes.
@@ -25,7 +25,7 @@ The wider homelab repository also has shared agent notes under `../docs/agents/`
 
 ## How It Works
 
-`bin/pa` joins command-line arguments into a single prompt, reads local context from `profile.md`, `memory.md`, and the current directory's `AGENTS.md`, then routes the prompt to either Codex or Ollama.
+`pa` joins command-line arguments into a single prompt, reads local context from `profile.md`, `memory.md`, and the current directory's `AGENTS.md`, then routes the prompt to either Codex or Ollama.
 
 Routing is keyword based unless the user forces a backend:
 
@@ -106,7 +106,7 @@ prompt print usage and exit with status code 1.
 
 ## Configuration
 
-The current CLI uses hard-coded defaults in `bin/pa`:
+The current CLI uses hard-coded defaults in `pa`:
 
 - Assistant directory: `$HOME/homelab/personal-assistant`
 - Profile context file: `$HOME/homelab/personal-assistant/profile.md`
@@ -170,7 +170,7 @@ pa --ollama "explain this git command without opening Codex"
 - A shell alias similar to:
 
 ```sh
-alias pa="$HOME/homelab/personal-assistant/bin/pa"
+alias pa="$HOME/homelab/personal-assistant/pa"
 ```
 
 ## Validation
@@ -178,7 +178,7 @@ alias pa="$HOME/homelab/personal-assistant/bin/pa"
 Run a syntax check:
 
 ```sh
-python3 -m py_compile bin/pa
+python3 -m py_compile pa
 ```
 
 Run automated CLI routing and backend behavior tests:
@@ -216,15 +216,15 @@ Expected behavior:
 If `pa` is not found, confirm the shell alias exists and reload the shell:
 
 ```sh
-alias pa="$HOME/homelab/personal-assistant/bin/pa"
+alias pa="$HOME/homelab/personal-assistant/pa"
 ```
 
 If Ollama prompts fail, confirm Ollama is running locally and listening on `http://localhost:11434`.
 
-If real Ollama prompts print `Ollama backend requires the Python package 'requests'.`, install `requests` for the Python environment running `bin/pa`.
+If real Ollama prompts print `Ollama backend requires the Python package 'requests'.`, install `requests` for the Python environment running `pa`.
 
 If Codex prompts fail, confirm `codex` is installed and available on `PATH`.
 
-If Codex prompts print `Codex command not found: codex`, install the Codex CLI or update `PATH` so `bin/pa` can find it.
+If Codex prompts print `Codex command not found: codex`, install the Codex CLI or update `PATH` so `pa` can find it.
 
 If Ollama prompts print `Ollama returned malformed stream: expected JSON object with optional message object.`, check the local Ollama service or any proxy returning the stream.
