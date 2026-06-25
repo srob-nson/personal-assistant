@@ -3,7 +3,6 @@
 import json
 import sys
 import subprocess
-import requests
 from pathlib import Path
 
 ASSISTANT_DIR = Path.home() / "homelab/personal-assistant"
@@ -60,14 +59,28 @@ def should_use_codex(prompt):
 def run_codex(prompt):
     print("-> Routed to Codex. Starting coding assistant...\n", flush=True)
 
-    result = subprocess.run(
-        ["codex", prompt],
-        text=True
-    )
+    try:
+        result = subprocess.run(
+            ["codex", prompt],
+            text=True
+        )
+    except FileNotFoundError:
+        print("Codex command not found: codex", file=sys.stderr)
+        return 127
+    except OSError as error:
+        print(f"Failed to start Codex: {error}", file=sys.stderr)
+        return 1
+
     return result.returncode
 
 
 def run_ollama(prompt):
+    try:
+        import requests
+    except ModuleNotFoundError:
+        print("Ollama backend requires the Python package 'requests'.", file=sys.stderr)
+        return 1
+
     payload = {
         "model": OLLAMA_MODEL,
         "stream": True,
@@ -100,9 +113,31 @@ def run_ollama(prompt):
 
                 chunk = json.loads(line.decode("utf-8"))
 
+                if not isinstance(chunk, dict):
+                    print(
+                        "Ollama returned malformed stream: expected JSON object with optional message object.",
+                        file=sys.stderr,
+                    )
+                    return 1
+
                 if "message" in chunk:
-                    content = chunk["message"].get("content", "")
-                    print(content, end="", flush=True)
+                    message = chunk["message"]
+                    if not isinstance(message, dict):
+                        print(
+                            "Ollama returned malformed stream: expected JSON object with optional message object.",
+                            file=sys.stderr,
+                        )
+                        return 1
+
+                    if "content" in message:
+                        content = message["content"]
+                        if not isinstance(content, str):
+                            print(
+                                "Ollama returned malformed stream: expected JSON object with optional message object.",
+                                file=sys.stderr,
+                            )
+                            return 1
+                        print(content, end="", flush=True)
 
                 if chunk.get("done"):
                     print()
@@ -119,9 +154,10 @@ def run_ollama(prompt):
 
 
 def print_usage():
-    print('Usage: pa "prompt here"')
+    print('Usage: pa [--codex|--ollama] "prompt here"')
     print()
     print("Routes coding-related prompts to Codex and other prompts to Ollama.")
+    print("Use --codex or --ollama to force a backend.")
 
 
 def main():
@@ -133,10 +169,23 @@ def main():
         print_usage()
         return 0
 
-    user_prompt = " ".join(sys.argv[1:])
+    route_override = None
+    prompt_args = sys.argv[1:]
+
+    if prompt_args[0] in ("--codex", "--ollama"):
+        route_override = prompt_args[0]
+        prompt_args = prompt_args[1:]
+
+        if not prompt_args:
+            print_usage()
+            return 1
+
+    user_prompt = " ".join(prompt_args)
     full_prompt = build_context(user_prompt)
 
-    if should_use_codex(user_prompt):
+    if route_override == "--codex" or (
+        route_override is None and should_use_codex(user_prompt)
+    ):
         return run_codex(full_prompt)
 
     return run_ollama(full_prompt)
