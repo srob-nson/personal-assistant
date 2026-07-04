@@ -1,16 +1,18 @@
 # Usage Analysis
 
-The CLI is a compact Python entry point. When it is run without arguments,
-`main()` prints:
+The CLI uses a thin Python entry point and package implementation. When it is
+run without arguments, `personal_assistant.cli.main()` prints:
 
 ```text
-Usage: pa [--codex|--ollama] "prompt here"
+Usage: pa [-c|-o] [-l] "prompt here"
 ```
 
 and exits with status code 1. For normal prompts, it joins all command-line
-arguments into one prompt, builds context from profile, memory, and `AGENTS.md`,
-then routes the request either to Codex or Ollama based on simple keyword
-matching unless `--codex` or `--ollama` is provided as the first argument.
+arguments into one prompt, routes the request either to Codex or Ollama based on
+simple keyword matching unless `-c` or `-o` is provided as a leading flag, and
+adds local context from profile, memory, and `AGENTS.md` for the selected
+backend. With `-l`, it also appends raw prompts, Ollama outputs, and backend
+status entries to Logseq `Prompts.md` and `Outputs.md` pages.
 
 ## Implemented Improvements
 
@@ -34,5 +36,16 @@ matching unless `--codex` or `--ollama` is provided as the first argument.
    backend work begins.
 
 6. Add forced routing flags.
-   Supporting `pa --codex "prompt"` and `pa --ollama "prompt"` lets the user
-   bypass keyword routing when the automatic route would make the wrong choice.
+   Supporting `pa -c "prompt"` and `pa -o "prompt"` lets the user bypass
+   keyword routing when the automatic route would make the wrong choice.
+
+7. Keep Ollama conversations in process.
+   Ollama-routed prompts now keep a local message history and prompt for
+   follow-up input until the user types exactly `exit`. This gives local models
+   prior user and assistant turns during the current session without writing
+   follow-ups to `memory.md`.
+
+8. Add opt-in Logseq capture.
+   Supporting `pa -l "prompt"` appends prompts to `Prompts.md`, Ollama outputs
+   to `Outputs.md`, and Codex status/resume metadata to `Outputs.md` without
+   capturing the full Codex transcript.
