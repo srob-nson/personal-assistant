@@ -1,5 +1,31 @@
 # Personal Assistant Next Changes
 
+## Task State Format
+
+Future Orchestrator updates to active or tracked durable task records in this file must keep each record in this compact shape. Priority-list items may remain as plain backlog entries until the Orchestrator starts or updates them, at which point the item is converted into a durable task record.
+
+```md
+### PA-001: Short title
+
+- priority: 1
+- status: todo
+- plan_attempts: 0
+- implementation_attempts: 0
+- fix_attempts: 0
+- validation_result: not_run
+- latest_failure_summary: none
+- changelog_status: not_needed
+- memory_status: not_needed
+- baseline: not_recorded
+- evidence: not_recorded
+```
+
+Allowed `status` values are `todo`, `planning`, `planned`, `implementing`, `reviewing`, `fixing`, `verifying`, `done`, and `blocked`.
+
+Allowed `validation_result` values are `not_run`, `passed`, `failed`, `preflight_failed`, and `blocked`.
+
+Use `baseline` for the base `HEAD`, scoped `personal-assistant` state, repo-wide dirty summary, and candidate materialization notes. Use `evidence` for before/after commands, verifier command results, and diff references.
+
 ## Priority Changes
 
 1. Harden the main Codex route.

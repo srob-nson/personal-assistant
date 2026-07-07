@@ -53,19 +53,39 @@ Task selection rule:
 3. Do not start a new task while another task is active.
 4. Do not delete completed tasks from `next.md`.
 
-Each task should track:
+Active and tracked durable task records in `next.md` must use the task-state format documented there. Priority-list items may remain as plain backlog entries until the Orchestrator starts or updates them, at which point the item is converted into a durable task record. The canonical fields are:
 
-- task id
-- priority
-- title
-- status
-- plan attempts
-- implementation attempts
-- fix attempts
-- validation result
-- latest failure summary
-- changelog status
-- memory status
+- `id`: stable task id, such as `PA-001`
+- `priority`: integer priority order
+- `title`: short task title
+- `status`: one of the allowed statuses above
+- `plan_attempts`: integer, starting at `0`
+- `implementation_attempts`: integer, starting at `0`
+- `fix_attempts`: integer, starting at `0`
+- `validation_result`: `not_run`, `passed`, `failed`, `preflight_failed`, or `blocked`
+- `latest_failure_summary`: `none` or one concise failure summary
+- `changelog_status`: `not_needed`, `planned`, `updated`, or `blocked`
+- `memory_status`: `not_needed`, `planned`, `updated`, or `blocked`
+- `baseline`: base `HEAD`, scoped status summary, repo-wide dirty summary, and materialization notes
+- `evidence`: before/after command evidence and verifier report references
+
+Use this Markdown shape for each durable task record:
+
+```md
+### PA-001: Short title
+
+- priority: 1
+- status: todo
+- plan_attempts: 0
+- implementation_attempts: 0
+- fix_attempts: 0
+- validation_result: not_run
+- latest_failure_summary: none
+- changelog_status: not_needed
+- memory_status: not_needed
+- baseline: not_recorded
+- evidence: not_recorded
+```
 
 ## Preflight
 
@@ -75,15 +95,19 @@ Run these commands from the Git root, `/home/jellyfish/homelab`:
 
 ```sh
 git rev-parse HEAD
+git status --short
 git status --short -- personal-assistant
 git diff --stat -- personal-assistant
+git ls-files --others --exclude-standard -- personal-assistant
 ```
 
-Also record untracked files under `personal-assistant`.
+Record repo-wide dirty state as a summary only. Dirty paths outside `personal-assistant` are outside the implementation scope unless the active task explicitly includes them. Record the current outside-scope dirty paths in the task baseline instead of treating them as candidate changes.
+
+Record `personal-assistant` scoped state explicitly, including tracked diffs, diffstat, and untracked files.
 
 Dirty files are baseline input, not completed work.
 
-If the baseline is unclear, contains secrets, includes deploy or migration changes, or has ownership conflicts, mark the task `blocked` and ask for human direction.
+If preflight is unclear, contains secrets, includes deploy or migration changes, or has ownership conflicts, mark the task `blocked` and ask for human direction.
 
 ## Workflow
 
@@ -101,6 +125,10 @@ The Planner must include:
 - rollback notes if relevant
 
 When planning starts, the Orchestrator sets the task status to `planning` and increments the plan attempt count.
+
+The Orchestrator accepts the Planner output when it is complete, scoped to the active task, compatible with the preflight baseline, and includes enough verification detail for a separate Verifier to execute it.
+
+Human approval is required before implementation if the plan includes destructive commands, secret handling, deploy or migration work, external writes, changes outside the approved scope, or unresolved ownership conflicts.
 
 When planning is accepted, the Orchestrator sets the task status to `planned`.
 
@@ -124,9 +152,22 @@ Both Implementers must start from the same baseline:
 
 If the baseline cannot be materialized cleanly, stop and mark the task `blocked`.
 
+Materialize candidates without destructive commands:
+
+1. Capture base `HEAD` from preflight.
+2. Save the scoped tracked diff for `personal-assistant`.
+3. Save the list of scoped untracked files under `personal-assistant`.
+4. Create each isolated tree from the same base `HEAD`, for example with `git worktree add` to a candidate path under `/tmp` or another approved scratch location.
+5. Apply the same scoped tracked diff to each candidate tree.
+6. Copy the same scoped untracked files into each candidate tree, preserving relative paths.
+7. Record the candidate path, base `HEAD`, applied diff artifact, and copied untracked file list in `next.md`.
+
+Do not use `git reset --hard`, `git checkout --`, `git clean`, or equivalent destructive cleanup to create or reset candidate state unless a human explicitly approves that action.
+
 Implementers must:
 
 - start with tests for behavior changes
+- for docs, process, and tracking-only tasks, capture before/after command evidence instead of forcing behavior tests
 - avoid contacting real Ollama or Codex in automated tests
 - avoid unrelated refactors
 - avoid changing shared documentation files unless the task requires it
@@ -181,8 +222,14 @@ python3 -m py_compile pa personal_assistant/*.py personal_assistant/backends/*.p
 python3 -m unittest discover -s tests
 ./pa --help
 ./pa morning-rundown --help
+git status --short
+git diff --name-only
 git diff --check
 ```
+
+For docs, process, and tracking-only tasks, the Verifier may skip code-specific commands only if the task plan explicitly marks them irrelevant. It must still run useful state and diff checks, including `git status --short`, `git diff --name-only`, and `git diff --check`.
+
+Add task-specific reference greps only when a future task explicitly asks for those checks.
 
 The Verifier must report:
 
@@ -197,8 +244,10 @@ The Verifier must report:
 - key output for each command
 - unit test count and final `OK` or failure summary
 - first usage line from each help command
+- `git status --short`
 - `git diff --stat`
 - `git diff --name-only`
+- out-of-scope dirty paths reported separately from selected candidate changes when repo-wide status or name-only output includes them
 - `git diff --check` result
 - confirmation that automated validation did not contact real Ollama or real Codex
 
@@ -222,10 +271,10 @@ Never write `passed`, `complete`, `done`, or `implemented` unless verifier evide
 
 ## Error Handling
 
-If baseline validation fails before implementation:
+If preflight fails before implementation:
 
 1. Mark the task `blocked`.
-2. Set validation to `baseline_failed`.
+2. Set validation to `preflight_failed`.
 3. Record the failed command and short failure summary in `next.md`.
 4. Add a concise `blocked` note to `memory.md`.
 5. Do not advance to the next task.

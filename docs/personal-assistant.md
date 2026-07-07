@@ -220,15 +220,28 @@ disabled for unattended cron use. The news and weather agents are the only
 agents launched with web search enabled. The journal stores the final rundown
 and source statuses, not full raw agent transcripts.
 
-Cron is not installed automatically. Add a user crontab entry like this after
-setting the weather location:
+Cron is not installed automatically. Create the log directory first:
+
+```sh
+mkdir -p /home/jellyfish/.local/state/personal-assistant
+```
+
+Then add a user crontab entry with an explicit environment:
 
 ```cron
 CRON_TZ=Europe/London
-0 6 * * * cd /home/jellyfish/homelab/personal-assistant && PA_LOGSEQ_GRAPH_DIR=/home/jellyfish/homelab/logseq2-0 PA_RUNDOWN_WEATHER_LOCATION="<LOCAL_AREA>" PA_RUNDOWN_REPOS="/home/jellyfish/homelab" ./pa morning-rundown >> /home/jellyfish/.local/state/personal-assistant/morning-rundown.cron.log 2>&1
+HOME=/home/jellyfish
+PATH=/home/jellyfish/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+PA_LOGSEQ_GRAPH_DIR=/home/jellyfish/homelab/logseq2-0
+PA_RUNDOWN_REPOS=/home/jellyfish/homelab
+# Optional, enables weather:
+# PA_RUNDOWN_WEATHER_LOCATION=<LOCAL_AREA>
+
+0 6 * * * cd /home/jellyfish/homelab/personal-assistant && ./pa morning-rundown >> /home/jellyfish/.local/state/personal-assistant/morning-rundown.cron.log 2>&1
 ```
 
-Rollback is removing that crontab line.
+Rollback is removing that crontab line and any `PA_*` variables added only for
+this job.
 
 ## Configuration
 
@@ -241,7 +254,7 @@ The current CLI uses hard-coded defaults in `personal_assistant.config`:
 - Ollama endpoint: `http://localhost:11434/api/chat`
 - Ollama model: `llama3.1:8b`
 - Ollama timeout: 120 seconds
-- Codex command: `codex`
+- Codex command: resolved from `PA_CODEX_COMMAND`, then `PATH`, then `$HOME/.local/bin/codex`, then `codex`
 - Logseq graph: `$HOME/homelab/logseq2-0`, overridden by `PA_LOGSEQ_GRAPH_DIR`
 - Codex sessions directory: `$HOME/.codex/sessions`, overridden by `PA_CODEX_SESSIONS_DIR`
 - Morning rundown repositories: `$HOME/homelab`, overridden by `PA_RUNDOWN_REPOS`
@@ -393,9 +406,9 @@ If Ollama prompts fail, confirm Ollama is running locally and listening on `http
 
 If real Ollama prompts print `Ollama backend requires the Python package 'requests'.`, install `requests` for the Python environment running `pa`.
 
-If Codex prompts fail, confirm `codex` is installed and available on `PATH`.
+If Codex prompts fail, confirm `codex` is installed and available on `PATH`, or set `PA_CODEX_COMMAND` to the executable path.
 
-If Codex prompts print `Codex command not found: codex`, install the Codex CLI or update `PATH` so `pa` can find it.
+If Codex prompts print `Codex command not found: codex`, install the Codex CLI, update `PATH`, or set `PA_CODEX_COMMAND`.
 
 If Ollama prompts print `Ollama returned malformed stream: expected JSON object with optional message object.`, check the local Ollama service or any proxy returning the stream.
 

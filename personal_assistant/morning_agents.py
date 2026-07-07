@@ -1,3 +1,5 @@
+import os
+import shutil
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -45,7 +47,7 @@ def run_agent(spec, run_dir, timeout_seconds):
     run_dir.mkdir(parents=True, exist_ok=True)
     output_path = run_dir / f"{_safe_file_name(spec.name)}.md"
 
-    command = ["codex"]
+    command = [_codex_command()]
     if spec.search_enabled:
         command.append("--search")
     command.extend(["--ask-for-approval", "never"])
@@ -104,6 +106,22 @@ def _read_summary(output_path, completed):
         if part and part.strip()
     )
     return fallback or "Agent produced no summary."
+
+
+def _codex_command():
+    configured = os.environ.get("PA_CODEX_COMMAND", "").strip()
+    if configured:
+        return configured
+
+    resolved = shutil.which("codex")
+    if resolved:
+        return resolved
+
+    home_local_codex = Path.home() / ".local" / "bin" / "codex"
+    if home_local_codex.exists():
+        return str(home_local_codex)
+
+    return "codex"
 
 
 def _safe_file_name(name):
