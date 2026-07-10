@@ -1,9 +1,12 @@
 import io
 import importlib
+import tempfile
 import unittest
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
+from pathlib import Path
 from unittest.mock import patch
 
+import personal_assistant.context as context_module
 import personal_assistant.cli as cli
 
 
@@ -58,51 +61,62 @@ class RoutingTests(unittest.TestCase):
         if recorder is None:
             recorder = FakeRecorder()
 
+        output = io.StringIO()
+        error = io.StringIO()
+
         with patch.object(cli, "run_codex", fake_codex):
             with patch.object(cli, "run_ollama", fake_ollama):
                 with patch.object(cli, "build_context", lambda prompt: f"CTX::{prompt}"):
                     with patch.object(
                         cli,
-                        "LogseqRecorder",
-                        return_value=recorder,
+                        "build_context_preview",
+                        lambda prompt: f"PREVIEW::{prompt}",
                         create=True,
                     ):
                         with patch.object(
                             cli,
-                            "new_session_id",
-                            return_value="pa-session-1",
+                            "LogseqRecorder",
+                            return_value=recorder,
                             create=True,
-                        ):
-                            with redirect_stdout(io.StringIO()), redirect_stderr(
-                                io.StringIO()
+                    ):
+                            with patch.object(
+                                cli,
+                                "new_session_id",
+                                return_value="pa-session-1",
+                                create=True,
                             ):
-                                result = cli.main(argv)
+                                with redirect_stdout(output), redirect_stderr(error):
+                                    result = cli.main(argv)
 
-        return result, calls, recorder
+        return result, calls, recorder, output.getvalue(), error.getvalue()
 
     def call_summary(self, calls):
         return [(route, prompt) for route, prompt, _kwargs in calls]
 
     def test_codex_flag_forces_codex_for_non_coding_prompt(self):
-        result, calls, _recorder = self.run_pa(["pa", "-c", "hello"])
+        result, calls, _recorder, _output, _error = self.run_pa(["pa", "-c", "hello"])
 
         self.assertEqual(result, 0)
         self.assertEqual(self.call_summary(calls), [("codex", "CTX::hello")])
 
     def test_ollama_flag_forces_ollama_for_coding_prompt(self):
-        result, calls, _recorder = self.run_pa(["pa", "-o", "review", "this", "repository"])
+        result, calls, _recorder, _output, _error = self.run_pa(
+            ["pa", "-o", "review", "this", "repository"]
+        )
 
         self.assertEqual(result, 0)
         self.assertEqual(self.call_summary(calls), [("ollama", "review this repository")])
 
     def test_default_keyword_routing_still_uses_codex_for_coding_prompt(self):
-        result, calls, _recorder = self.run_pa(["pa", "review", "this", "repository"])
+        result, calls, _recorder, _output, _error = self.run_pa(
+            ["pa", "review", "this", "repository"]
+        )
 
         self.assertEqual(result, 0)
         self.assertEqual(self.call_summary(calls), [("codex", "CTX::review this repository")])
 
     def test_default_keyword_routing_still_uses_ollama_for_general_prompt(self):
-        result, calls, _recorder = self.run_pa(["pa", "hello"])
+        result, calls, _recorder, _output, _error = self.run_pa(["pa", "hello"])
 
         self.assertEqual(result, 0)
         self.assertEqual(self.call_summary(calls), [("ollama", "hello")])
@@ -125,7 +139,9 @@ class RoutingTests(unittest.TestCase):
     def test_logseq_flag_records_initial_prompt_before_codex_route(self):
         recorder = FakeRecorder()
 
-        result, calls, _recorder = self.run_pa(["pa", "-l", "-c", "hello"], recorder)
+        result, calls, _recorder, _output, _error = self.run_pa(
+            ["pa", "-l", "-c", "hello"], recorder
+        )
 
         self.assertEqual(result, 0)
         self.assertEqual(self.call_summary(calls), [("codex", "CTX::hello")])
@@ -149,7 +165,9 @@ class RoutingTests(unittest.TestCase):
     def test_logseq_flag_records_initial_prompt_before_ollama_route(self):
         recorder = FakeRecorder()
 
-        result, calls, _recorder = self.run_pa(["pa", "-o", "-l", "hello"], recorder)
+        result, calls, _recorder, _output, _error = self.run_pa(
+            ["pa", "-o", "-l", "hello"], recorder
+        )
 
         self.assertEqual(result, 0)
         self.assertEqual(self.call_summary(calls), [("ollama", "hello")])
@@ -161,7 +179,7 @@ class RoutingTests(unittest.TestCase):
     def test_conflicting_route_flags_print_usage_and_fail(self):
         for argv in (["pa", "-c", "-o", "hello"], ["pa", "-o", "-c", "hello"]):
             with self.subTest(argv=argv):
-                result, calls, recorder = self.run_pa(argv)
+                result, calls, recorder, _output, _error = self.run_pa(argv)
 
                 self.assertEqual(result, 1)
                 self.assertEqual(calls, [])
@@ -170,21 +188,21 @@ class RoutingTests(unittest.TestCase):
     def test_old_long_route_flags_print_usage_and_fail(self):
         for flag in ("--codex", "--ollama"):
             with self.subTest(flag=flag):
-                result, calls, recorder = self.run_pa(["pa", flag, "hello"])
+                result, calls, recorder, _output, _error = self.run_pa(["pa", flag, "hello"])
 
                 self.assertEqual(result, 1)
                 self.assertEqual(calls, [])
                 self.assertEqual(recorder.records, [])
 
     def test_unknown_leading_flag_prints_usage_and_fails(self):
-        result, calls, recorder = self.run_pa(["pa", "-x", "hello"])
+        result, calls, recorder, _output, _error = self.run_pa(["pa", "-x", "hello"])
 
         self.assertEqual(result, 1)
         self.assertEqual(calls, [])
         self.assertEqual(recorder.records, [])
 
     def test_flags_after_prompt_are_prompt_text(self):
-        result, calls, _recorder = self.run_pa(["pa", "hello", "-l"])
+        result, calls, _recorder, _output, _error = self.run_pa(["pa", "hello", "-l"])
 
         self.assertEqual(result, 0)
         self.assertEqual(self.call_summary(calls), [("ollama", "hello -l")])
@@ -223,6 +241,99 @@ class RoutingTests(unittest.TestCase):
             [(route, prompt) for route, prompt, _kwargs in calls],
             [("codex", "CTX::review this repository")],
         )
+
+    def test_context_preview_prints_preview_without_calling_backends(self):
+        result, calls, recorder, output, error = self.run_pa(
+            ["pa", "--context-preview", "review", "this", "repository"]
+        )
+
+        self.assertEqual(result, 0)
+        self.assertEqual(calls, [])
+        self.assertEqual(recorder.records, [])
+        self.assertEqual(error, "")
+        self.assertEqual(output.strip(), "PREVIEW::review this repository")
+
+    def test_context_preview_without_prompt_prints_usage_and_fails(self):
+        result, calls, recorder, output, error = self.run_pa(["pa", "--context-preview"])
+
+        self.assertEqual(result, 1)
+        self.assertEqual(calls, [])
+        self.assertEqual(recorder.records, [])
+        self.assertEqual(error, "")
+        self.assertIn("Usage:", output)
+
+    def test_context_preview_rejects_route_flags_without_prompt(self):
+        result, calls, recorder, output, _error = self.run_pa(["pa", "--context-preview", "-c"])
+
+        self.assertEqual(result, 1)
+        self.assertEqual(calls, [])
+        self.assertEqual(recorder.records, [])
+        self.assertIn("Usage:", output)
+
+    def test_context_preview_prints_real_shapes_without_backends_or_logseq(self):
+        calls, fake_codex, fake_ollama = install_fake_backends()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile_path = root / "profile.md"
+            memory_path = root / "memory.md"
+            agents_path = root / "AGENTS.md"
+            profile_path.write_text("abcdef", encoding="utf-8")
+            memory_path.write_text("memo", encoding="utf-8")
+            agents_path.write_text("AGENTS BODY", encoding="utf-8")
+
+            output = io.StringIO()
+            error = io.StringIO()
+
+            with patch.object(context_module, "PROFILE_FILE", profile_path):
+                with patch.object(context_module, "MEMORY_FILE", memory_path):
+                    with patch.object(context_module.Path, "cwd", return_value=root):
+                        with patch.object(context_module, "CONTEXT_SECTION_CHAR_CAP", 5):
+                            with patch.object(context_module, "CONTEXT_PROFILE_CHAR_CAP", 5):
+                                with patch.object(context_module, "CONTEXT_MEMORY_CHAR_CAP", 5):
+                                    with patch.object(context_module, "CONTEXT_AGENTS_CHAR_CAP", 5):
+                                        with patch.object(cli, "run_codex", fake_codex):
+                                            with patch.object(cli, "run_ollama", fake_ollama):
+                                                with patch.object(
+                                                    cli,
+                                                    "LogseqRecorder",
+                                                    side_effect=AssertionError(
+                                                        "preview should not capture Logseq"
+                                                    ),
+                                                ):
+                                                    with redirect_stdout(output):
+                                                        with redirect_stderr(error):
+                                                            result = cli.main(
+                                                                [
+                                                                    "pa",
+                                                                    "--context-preview",
+                                                                    "-l",
+                                                                    "hello",
+                                                                ]
+                                                            )
+
+        preview = output.getvalue()
+        self.assertEqual(result, 0)
+        self.assertEqual(calls, [])
+        self.assertEqual(error.getvalue(), "")
+        self.assertIn("Codex shape:", preview)
+        self.assertIn("USER PROMPT:\nhello", preview)
+        self.assertIn("Ollama shape:", preview)
+        self.assertIn("role=system", preview)
+        self.assertIn("role=user\nhello", preview)
+        self.assertIn(
+            f"[PROFILE | source={profile_path} | chars=6 | present | truncated to 5]",
+            preview,
+        )
+        self.assertIn(
+            f"[MEMORY | source={memory_path} | chars=4 | present | full]",
+            preview,
+        )
+        self.assertIn(
+            f"[PROJECT CONTEXT | source={agents_path} | chars=11 | present | truncated to 5]",
+            preview,
+        )
+        self.assertIn("[TRUNCATED from 6 to 5 chars]", preview)
 
     def test_run_ollama_reports_missing_requests_dependency(self):
         import personal_assistant.backends.ollama as ollama_backend

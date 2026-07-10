@@ -3,7 +3,7 @@ import uuid
 
 from personal_assistant.backends.codex import run_codex
 from personal_assistant.backends.ollama import run_ollama
-from personal_assistant.context import build_context
+from personal_assistant.context import build_context, build_context_preview
 from personal_assistant.logseq import LogseqRecorder
 from personal_assistant.morning import run_morning_rundown
 from personal_assistant.routing import should_use_codex
@@ -14,10 +14,11 @@ class UsageError(Exception):
 
 
 def print_usage():
-    print('Usage: pa [-c|-o] [-l] "prompt here"')
+    print('Usage: pa [--context-preview] [-c|-o] [-l] "prompt here"')
     print("       pa morning-rundown [--dry-run] [--force]")
     print()
     print("Routes coding-related prompts to Codex and other prompts to Ollama.")
+    print("Use --context-preview to print the local context sent to each backend.")
     print("Use -c or -o to force a backend.")
     print("Use -l to capture prompts and outputs in Logseq.")
     print("Use morning-rundown to write a 6am planning brief to today's Logseq journal.")
@@ -31,6 +32,7 @@ def parse_args(args):
     if not args:
         raise UsageError()
 
+    context_preview = False
     route_override = None
     logseq_enabled = False
     index = 0
@@ -39,10 +41,15 @@ def parse_args(args):
         arg = args[index]
 
         if arg in ("-h", "--help"):
-            return True, None, False, []
+            return True, False, None, False, []
 
         if arg in ("--codex", "--ollama"):
             raise UsageError()
+
+        if arg == "--context-preview":
+            context_preview = True
+            index += 1
+            continue
 
         if arg == "-l":
             logseq_enabled = True
@@ -66,7 +73,7 @@ def parse_args(args):
     if not prompt_args:
         raise UsageError()
 
-    return False, route_override, logseq_enabled, prompt_args
+    return False, context_preview, route_override, logseq_enabled, prompt_args
 
 
 def main(argv=None):
@@ -77,7 +84,9 @@ def main(argv=None):
         return run_morning_rundown(argv[2:])
 
     try:
-        show_help, route_override, logseq_enabled, prompt_args = parse_args(argv[1:])
+        show_help, context_preview, route_override, logseq_enabled, prompt_args = parse_args(
+            argv[1:]
+        )
     except UsageError:
         print_usage()
         return 1
@@ -87,6 +96,10 @@ def main(argv=None):
         return 0
 
     user_prompt = " ".join(prompt_args)
+    if context_preview:
+        print(build_context_preview(user_prompt))
+        return 0
+
     route = route_override
     if route is None:
         route = "codex" if should_use_codex(user_prompt) else "ollama"

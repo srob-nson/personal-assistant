@@ -1,5 +1,7 @@
 # Loop: implement-new
 
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task.
+
 This is a prompt-only orchestration runbook for agent-driven implementation in `/home/jellyfish/homelab/personal-assistant`.
 
 It is not machine-executable config. A human or supervising agent must enforce the loop rules, state transitions, stop conditions, and validation gates.

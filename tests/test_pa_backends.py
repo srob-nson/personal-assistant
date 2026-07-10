@@ -1,6 +1,7 @@
 import io
 import json
 import sys
+import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -164,6 +165,22 @@ class BackendTests(unittest.TestCase):
         lines = [line for line in error.splitlines() if line.strip()]
         self.assertEqual(lines, [error.strip()])
 
+    def with_temp_context_files(self, profile_text=None, memory_text=None, agents_text=None):
+        temp_dir = tempfile.TemporaryDirectory()
+        root = Path(temp_dir.name)
+        profile_path = root / "profile.md"
+        memory_path = root / "memory.md"
+        agents_path = root / "AGENTS.md"
+
+        if profile_text is not None:
+            profile_path.write_text(profile_text, encoding="utf-8")
+        if memory_text is not None:
+            memory_path.write_text(memory_text, encoding="utf-8")
+        if agents_text is not None:
+            agents_path.write_text(agents_text, encoding="utf-8")
+
+        return temp_dir, root, profile_path, memory_path, agents_path
+
     def test_run_codex_returns_subprocess_return_code(self):
         with patch.object(
             codex_backend.subprocess,
@@ -265,6 +282,77 @@ class BackendTests(unittest.TestCase):
         self.assertIn("MEMORY:\nMEMORY TEXT", prompt)
         self.assertIn("PROJECT CONTEXT:\nAGENTS TEXT", prompt)
         self.assertNotIn("USER PROMPT:", prompt)
+
+    def test_build_context_marks_missing_sources_without_truncation(self):
+        temp_dir, root, profile_path, memory_path, agents_path = self.with_temp_context_files()
+        self.addCleanup(temp_dir.cleanup)
+
+        with patch.object(context_module, "PROFILE_FILE", profile_path):
+            with patch.object(context_module, "MEMORY_FILE", memory_path):
+                with patch.object(context_module.Path, "cwd", return_value=root):
+                    prompt = context_module.build_context("hello")
+
+        self.assertIn(f"[PROFILE | source={profile_path} | chars=0 | missing | full]", prompt)
+        self.assertIn(f"[MEMORY | source={memory_path} | chars=0 | missing | full]", prompt)
+        self.assertIn(
+            f"[PROJECT CONTEXT | source={agents_path} | chars=0 | missing | full]",
+            prompt,
+        )
+        self.assertIn("USER PROMPT:\nhello", prompt)
+
+    def test_build_context_labels_sources_counts_and_truncation(self):
+        temp_dir, root, profile_path, memory_path, agents_path = self.with_temp_context_files(
+            profile_text="abcdef",
+            memory_text="1234",
+            agents_text="AGENTS BODY",
+        )
+        self.addCleanup(temp_dir.cleanup)
+
+        with patch.object(context_module, "PROFILE_FILE", profile_path):
+            with patch.object(context_module, "MEMORY_FILE", memory_path):
+                with patch.object(context_module.Path, "cwd", return_value=root):
+                    with patch.object(context_module, "CONTEXT_SECTION_CHAR_CAP", 4):
+                        prompt = context_module.build_context("review this")
+                        preview = context_module.build_context_preview("review this")
+
+        self.assertIn(
+            f"[PROFILE | source={profile_path} | chars=6 | present | truncated to 4]",
+            prompt,
+        )
+        self.assertIn("abcd\n[TRUNCATED from 6 to 4 chars]", prompt)
+        self.assertIn(
+            f"[MEMORY | source={memory_path} | chars=4 | present | full]",
+            prompt,
+        )
+        self.assertIn(
+            f"[PROJECT CONTEXT | source={agents_path} | chars=11 | present | truncated to 4]",
+            prompt,
+        )
+        self.assertIn("Codex shape:", preview)
+        self.assertIn("Ollama shape:", preview)
+        self.assertIn("USER PROMPT:\nreview this", preview)
+        self.assertIn("role=system", preview)
+        self.assertIn("role=user\nreview this", preview)
+
+    def test_build_ollama_system_prompt_marks_truncated_sections(self):
+        temp_dir, root, profile_path, memory_path, agents_path = self.with_temp_context_files(
+            profile_text="abcdef",
+            memory_text="123456",
+            agents_text="xyz",
+        )
+        self.addCleanup(temp_dir.cleanup)
+
+        with patch.object(context_module, "PROFILE_FILE", profile_path):
+            with patch.object(context_module, "MEMORY_FILE", memory_path):
+                with patch.object(context_module.Path, "cwd", return_value=root):
+                    with patch.object(context_module, "CONTEXT_SECTION_CHAR_CAP", 3):
+                        prompt = context_module.build_ollama_system_prompt()
+
+        self.assertNotIn("USER PROMPT:", prompt)
+        self.assertIn("[PROFILE | source=", prompt)
+        self.assertIn("[TRUNCATED from 6 to 3 chars]", prompt)
+        self.assertIn("[MEMORY | source=", prompt)
+        self.assertIn("[TRUNCATED from 6 to 3 chars]", prompt)
 
     def test_run_ollama_first_payload_uses_context_system_and_raw_user_prompt(self):
         result, _output, error, exc, post, input_mock = self.call_run_ollama(

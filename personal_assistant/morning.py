@@ -9,15 +9,17 @@ from personal_assistant.config import (
     RUNDOWN_AGENT_TIMEOUT_SECONDS,
     RUNDOWN_REPOS,
     RUNDOWN_TASK_LIMIT,
+    RUNDOWN_WEATHER_TIMEOUT_SECONDS,
     RUNDOWN_WEATHER_LOCATION,
 )
-from personal_assistant.morning_agents import AgentResult, AgentSpec, run_agents
+from personal_assistant.morning_agents import AgentSpec, run_agents
 from personal_assistant.morning_journal import (
     build_journal_block,
     has_journal_block,
     journal_path_for_date,
     upsert_journal_block,
 )
+from personal_assistant.morning_weather import fetch_weather_summary
 
 
 LOGSEQ_PAGES = ("Goals", "Tasks", "Projects")
@@ -65,7 +67,12 @@ def run_morning_rundown(args, today_func=None, now_func=None, stdout=None, stder
         run_dir = Path(run_dir_name)
         source_specs = _build_source_specs(graph_dir)
         source_results = run_agents(source_specs, run_dir, RUNDOWN_AGENT_TIMEOUT_SECONDS)
-        source_results = source_results + _unavailable_source_results()
+        source_results = source_results + [
+            fetch_weather_summary(
+                RUNDOWN_WEATHER_LOCATION,
+                RUNDOWN_WEATHER_TIMEOUT_SECONDS,
+            )
+        ]
 
         reviewer_spec = _build_reviewer_spec(source_results)
         reviewer_results = run_agents([reviewer_spec], run_dir, RUNDOWN_AGENT_TIMEOUT_SECONDS)
@@ -77,16 +84,22 @@ def run_morning_rundown(args, today_func=None, now_func=None, stdout=None, stder
     if reviewer_result.status != "ok":
         tasks = [f"Review failed morning rundown agent output: {reviewer_result.summary}"]
 
+    degraded_results = _degraded_results(source_results)
+    exit_code = 0 if reviewer_result.status == "ok" and not degraded_results else 1
+
     block = build_journal_block(
         run_date=run_date,
         generated_at=generated_at,
         tasks=tasks,
         source_statuses=source_statuses,
+        weather_summary=_weather_summary(source_results),
     )
 
     if options["dry_run"]:
         stdout(block.rstrip())
-        return 0 if reviewer_result.status == "ok" else 1
+        if degraded_results:
+            stderr(_degraded_message(degraded_results))
+        return exit_code
 
     wrote = upsert_journal_block(
         journal_path,
@@ -99,7 +112,9 @@ def run_morning_rundown(args, today_func=None, now_func=None, stdout=None, stder
     else:
         stdout(f"Morning rundown already exists for {run_date.isoformat()}. Use --force to replace it.")
 
-    return 0 if reviewer_result.status == "ok" else 1
+    if degraded_results:
+        stderr(_degraded_message(degraded_results))
+    return exit_code
 
 
 def _parse_morning_args(args):
@@ -151,15 +166,6 @@ def _build_source_specs(graph_dir):
             prompt=_news_prompt(),
         ),
     ]
-    if RUNDOWN_WEATHER_LOCATION:
-        specs.append(
-            AgentSpec(
-                name="weather",
-                workdir=Path(ASSISTANT_DIR),
-                search_enabled=True,
-                prompt=_weather_prompt(),
-            )
-        )
     return specs
 
 
@@ -171,14 +177,17 @@ def _build_reviewer_spec(source_results):
     prompt = f"""
 You are the final reviewer for Sam's morning rundown.
 
-Use the source-agent reports below to produce {RUNDOWN_TASK_LIMIT} or fewer focused, specific Logseq TODO items.
+Use the source-agent reports below to produce {RUNDOWN_TASK_LIMIT} or fewer ranked, outcome-focused Logseq TODO items.
 Each task must be actionable today, tied to goals or current context where possible, and short enough to scan in a journal.
-Do not include raw source dumps, secrets, or generic wellness advice.
+Combine validation, cleanup, and documentation work into the related outcome task when possible.
+Avoid generic wellness advice. Avoid separate low-value housekeeping tasks unless they are blocking a more important outcome.
+Do not include raw source dumps or secrets.
 
-Return only markdown task bullets. Prefer this shape:
-- TODO Concrete task
-  source:: [[Goals]]
-  why:: Brief reason
+Return only markdown task bullets in this exact shape:
+- TODO Concrete outcome for today
+  source:: [[Goals]] or [[Tasks]] or [[Projects]] or repo/news/weather
+  why:: One short reason this matters today
+  next:: First concrete action or finish condition
 
 SOURCE REPORTS:
 {source_text}
@@ -229,29 +238,6 @@ Return at most five concise bullets with source names. Avoid speculation and do 
 """.strip()
 
 
-def _weather_prompt():
-    location = RUNDOWN_WEATHER_LOCATION
-    return f"""
-You are a weather source agent for a morning rundown.
-
-Use web search to summarize today's local weather for: {location}
-Return only practical planning details such as rain, temperature range, wind, travel disruption, and daylight concerns.
-""".strip()
-
-
-def _unavailable_source_results():
-    if RUNDOWN_WEATHER_LOCATION:
-        return []
-    return [
-        AgentResult(
-            "weather",
-            "unavailable",
-            "PA_RUNDOWN_WEATHER_LOCATION is not set; weather was not searched.",
-            0,
-        )
-    ]
-
-
 def _repo_paths():
     paths = []
     for value in RUNDOWN_REPOS.split(":"):
@@ -261,23 +247,76 @@ def _repo_paths():
     return paths
 
 
+def _degraded_results(results):
+    return [
+        result
+        for result in results
+        if result.status not in ("ok", "unavailable")
+    ]
+
+
+def _degraded_message(results):
+    statuses = "; ".join(f"{result.name} {result.status}" for result in results)
+    return f"Morning rundown degraded: {statuses}"
+
+
+def _weather_summary(results):
+    for result in results:
+        if result.name == "weather" and result.status == "ok":
+            return result.summary
+    return ""
+
+
 def _extract_tasks(summary, limit):
     tasks = []
+    current_task = None
     for line in str(summary).splitlines():
         stripped = line.strip()
         if not stripped:
+            current_task = None
             continue
-        if stripped.startswith("- TODO ") or stripped.startswith("TODO "):
-            tasks.append(stripped)
-        elif stripped.startswith("- [ ] "):
-            tasks.append("- TODO " + stripped[6:].strip())
+
+        task_start = _normalise_task_start(stripped)
+        if task_start:
+            if len(tasks) >= limit:
+                break
+            current_task = [task_start]
+            tasks.append(current_task)
+            continue
+
+        if current_task is not None and _is_task_detail_line(line):
+            current_task.append(stripped)
+        else:
+            current_task = None
+
         if len(tasks) >= limit:
-            break
+            continue
 
     if tasks:
-        return tasks
+        return ["\n".join(task) for task in tasks]
 
     fallback = str(summary).strip()
     if fallback:
         return [fallback.splitlines()[0]]
     return []
+
+
+def _normalise_task_start(stripped):
+    if stripped.startswith("- TODO "):
+        return stripped
+    if stripped.startswith("TODO "):
+        return "- " + stripped
+    if stripped.startswith("- [ ] "):
+        return "- TODO " + stripped[6:].strip()
+    return ""
+
+
+def _is_task_detail_line(line):
+    if line == line.lstrip():
+        return False
+    stripped = line.strip()
+    return (
+        stripped.startswith("source::")
+        or stripped.startswith("why::")
+        or stripped.startswith("next::")
+    )

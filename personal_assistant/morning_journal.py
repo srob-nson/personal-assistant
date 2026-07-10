@@ -5,7 +5,7 @@ def journal_path_for_date(graph_dir, run_date):
     return Path(graph_dir) / "journals" / f"{run_date:%Y_%m_%d}.md"
 
 
-def build_journal_block(run_date, generated_at, tasks, source_statuses):
+def build_journal_block(run_date, generated_at, tasks, source_statuses, weather_summary=None):
     date_text = run_date.isoformat()
     lines = [
         _start_marker(run_date),
@@ -14,6 +14,9 @@ def build_journal_block(run_date, generated_at, tasks, source_statuses):
         f"  generated_at:: {generated_at.isoformat()}",
         f"  source_status:: {'; '.join(source_statuses)}",
     ]
+    weather_lines = _format_weather_summary(weather_summary)
+    if weather_lines:
+        lines.extend(weather_lines)
 
     task_lines = [_format_task_line(task) for task in tasks if str(task).strip()]
     if not task_lines:
@@ -62,12 +65,34 @@ def has_journal_block(journal_path, run_date):
 
 
 def _format_task_line(task):
-    text = str(task).strip()
-    if text.startswith("- "):
-        return f"  {text}"
-    if text.startswith("TODO "):
-        return f"  - {text}"
-    return f"  - TODO {text}"
+    lines = [line.strip() for line in str(task).strip().splitlines() if line.strip()]
+    if not lines:
+        return ""
+
+    first = lines[0]
+    if first.startswith("- "):
+        formatted = [f"  {first}"]
+    elif first.startswith("TODO "):
+        formatted = [f"  - {first}"]
+    else:
+        formatted = [f"  - TODO {first}"]
+
+    formatted.extend(f"    {line}" for line in lines[1:])
+    return "\n".join(formatted)
+
+
+def _format_weather_summary(weather_summary):
+    if not str(weather_summary or "").strip():
+        return []
+    lines = ["  - Weather"]
+    for line in str(weather_summary).splitlines():
+        text = line.strip()
+        if not text:
+            continue
+        if text.startswith("- "):
+            text = text[2:].strip()
+        lines.append(f"    - {text}")
+    return lines
 
 
 def _start_marker(run_date):

@@ -57,6 +57,45 @@ class MorningJournalTests(unittest.TestCase):
             self.assertFalse(wrote)
             self.assertEqual(journal.read_text(), original)
 
+    def test_build_journal_block_includes_weather_summary(self):
+        block = build_journal_block(
+            run_date=date(2026, 6, 30),
+            generated_at=datetime(2026, 6, 30, 6, 0, tzinfo=timezone.utc),
+            tasks=["TODO Review [[Goals]]"],
+            source_statuses=["weather ok"],
+            weather_summary=(
+                "- Whole Day: 13 C to 22 C, precipitation 1.4 mm.\n"
+                "- Light: sunrise 05:00, sunset 21:10, UV max 6."
+            ),
+        )
+
+        self.assertIn("  - Weather\n", block)
+        self.assertIn("    - Whole Day: 13 C to 22 C, precipitation 1.4 mm.", block)
+        self.assertIn("    - Light: sunrise 05:00, sunset 21:10, UV max 6.", block)
+        self.assertNotIn("Current:", block)
+        self.assertNotIn("Morning (06-12):", block)
+
+    def test_build_journal_block_formats_multiline_task_as_one_block(self):
+        block = build_journal_block(
+            run_date=date(2026, 6, 30),
+            generated_at=datetime(2026, 6, 30, 6, 0, tzinfo=timezone.utc),
+            tasks=[
+                "- TODO Ship compact morning rundown\n"
+                "  source:: [[Projects]]\n"
+                "  why:: Keeps the daily journal scannable\n"
+                "  next:: Run the dry-run and replace today's block"
+            ],
+            source_statuses=["reviewer ok"],
+        )
+
+        self.assertIn(
+            "  - TODO Ship compact morning rundown\n"
+            "    source:: [[Projects]]\n"
+            "    why:: Keeps the daily journal scannable\n"
+            "    next:: Run the dry-run and replace today's block",
+            block,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

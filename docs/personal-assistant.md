@@ -34,7 +34,7 @@ The CLI also has a non-interactive morning rundown command:
 pa morning-rundown
 ```
 
-That command dispatches read-only Codex background agents for Logseq, repository, news, weather, and final review work, then writes the final focused task list into that day's Logseq journal.
+That command dispatches read-only Codex background agents for Logseq, repository, news, and final review work, fetches optional weather from Open-Meteo, then writes the final focused task list into that day's Logseq journal.
 
 Routing is keyword based unless the user forces a backend:
 
@@ -55,6 +55,7 @@ The main Python flow is split by responsibility:
 - `personal_assistant.backends.ollama`: prints a wait indicator, streams Ollama output, keeps in-session conversation history, and reports request or JSON errors.
 - `personal_assistant.morning`: orchestrates the morning rundown workflow.
 - `personal_assistant.morning_agents`: runs source and reviewer agents through `codex exec`.
+- `personal_assistant.morning_weather`: fetches optional Open-Meteo weather for the morning rundown.
 - `personal_assistant.morning_journal`: writes and replaces generated Logseq journal blocks.
 
 ## Routing Reference
@@ -212,13 +213,26 @@ The workflow runs source agents first, then a reviewer agent:
 - `logseq`: reads Goals, Tasks, and Projects pages.
 - `repo`: inspects configured repositories with read-only Git commands.
 - `news`: uses Codex web search for current world news.
-- `weather`: uses Codex web search for the location in `PA_RUNDOWN_WEATHER_LOCATION`.
-- `reviewer`: turns source summaries into focused Logseq TODO items.
+- `weather`: fetches Open-Meteo data for the configured weather location.
+- `reviewer`: turns source summaries into up to five focused Logseq TODO items.
 
 Codex agents run through `codex exec` with read-only sandboxing and approval
-disabled for unattended cron use. The news and weather agents are the only
-agents launched with web search enabled. The journal stores the final rundown
-and source statuses, not full raw agent transcripts.
+disabled for unattended cron use. The news agent is the only source agent
+launched with web search enabled. The journal stores the final rundown, source
+statuses, and a practical weather section when weather is configured.
+
+The weather section uses Open-Meteo daily forecast data and is intentionally
+compact. Successful weather output has exactly two child lines:
+
+```markdown
+  - Weather
+    - Whole Day: ...
+    - Light: ...
+```
+
+Reviewer output is capped at five TODO blocks per day. `PA_RUNDOWN_TASK_LIMIT`
+may lower the cap, but values above `5` are clamped to `5`. Each generated task
+may include short `source::`, `why::`, and `next::` detail lines.
 
 Cron is not installed automatically. Create the log directory first:
 
@@ -234,7 +248,7 @@ HOME=/home/jellyfish
 PATH=/home/jellyfish/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 PA_LOGSEQ_GRAPH_DIR=/home/jellyfish/homelab/logseq2-0
 PA_RUNDOWN_REPOS=/home/jellyfish/homelab
-# Optional, enables weather:
+# Optional, overrides the local weather-location file:
 # PA_RUNDOWN_WEATHER_LOCATION=<LOCAL_AREA>
 
 0 6 * * * cd /home/jellyfish/homelab/personal-assistant && ./pa morning-rundown >> /home/jellyfish/.local/state/personal-assistant/morning-rundown.cron.log 2>&1
@@ -254,17 +268,23 @@ The current CLI uses hard-coded defaults in `personal_assistant.config`:
 - Ollama endpoint: `http://localhost:11434/api/chat`
 - Ollama model: `llama3.1:8b`
 - Ollama timeout: 120 seconds
+- Context section cap: `4000` characters, overridden by `PA_CONTEXT_SECTION_CHAR_CAP`
+- Profile context cap: defaults to the context section cap, overridden by `PA_PROFILE_CHAR_CAP`
+- Memory context cap: defaults to the context section cap, overridden by `PA_MEMORY_CHAR_CAP`
+- Project instructions cap: defaults to the context section cap, overridden by `PA_AGENTS_CHAR_CAP`
 - Codex command: resolved from `PA_CODEX_COMMAND`, then `PATH`, then `$HOME/.local/bin/codex`, then `codex`
 - Logseq graph: `$HOME/homelab/logseq2-0`, overridden by `PA_LOGSEQ_GRAPH_DIR`
 - Codex sessions directory: `$HOME/.codex/sessions`, overridden by `PA_CODEX_SESSIONS_DIR`
 - Morning rundown repositories: `$HOME/homelab`, overridden by `PA_RUNDOWN_REPOS`
-- Morning rundown weather location: unset by default, set with `PA_RUNDOWN_WEATHER_LOCATION`
-- Morning rundown task limit: `7`, overridden by `PA_RUNDOWN_TASK_LIMIT`
+- Morning rundown weather location: set with `PA_RUNDOWN_WEATHER_LOCATION`, or with `$HOME/.config/personal-assistant/weather-location` when the env var is unset
+- Morning rundown weather location file: `$HOME/.config/personal-assistant/weather-location`, overridden by `PA_RUNDOWN_WEATHER_LOCATION_FILE`
+- Morning rundown task limit: `5`, overridden by `PA_RUNDOWN_TASK_LIMIT` and clamped to `1..5`
 - Morning rundown agent timeout: `300` seconds, overridden by `PA_RUNDOWN_AGENT_TIMEOUT_SECONDS`
+- Morning rundown weather timeout: `10` seconds, overridden by `PA_RUNDOWN_WEATHER_TIMEOUT_SECONDS`
 
-Backend and context paths remain hard-coded defaults. Logseq and Codex session
-paths can be overridden with environment variables for testing or alternate
-local layouts.
+Backend and context paths remain hard-coded defaults. Context caps, Logseq, and
+Codex session paths can be overridden with environment variables for testing or
+alternate local layouts.
 
 ## Context And Privacy
 
@@ -273,14 +293,28 @@ context in different shapes.
 
 Codex receives one expanded prompt containing:
 
-- The contents of `profile.md`, if present.
-- The contents of `memory.md`, if present.
-- The contents of `AGENTS.md` from the current working directory, if present.
+- The capped contents of `profile.md`, labeled with source path, character
+  count, presence, and truncation state.
+- The capped contents of `memory.md`, labeled with source path, character
+  count, presence, and truncation state.
+- The capped contents of `AGENTS.md` from the current working directory,
+  labeled with source path, character count, presence, and truncation state.
 - The user's original prompt.
 
-Ollama receives the profile, memory, and current directory `AGENTS.md` content
-as the first system message, then keeps the user's original prompt, assistant
-responses, and follow-up prompts as separate chat messages for that process.
+Ollama receives the same capped and labeled profile, memory, and current
+directory `AGENTS.md` content as the first system message, then keeps the user's
+original prompt, assistant responses, and follow-up prompts as separate chat
+messages for that process.
+
+Preview the exact local context and backend message shapes without contacting
+Codex or Ollama:
+
+```sh
+pa --context-preview "prompt here"
+```
+
+The preview prints the Codex expanded prompt shape, including `USER PROMPT`,
+and the Ollama shape with separate `role=system` and `role=user` messages.
 
 Do not store secrets, credentials, private tokens, or sensitive machine-specific
 details in `profile.md`, `memory.md`, or repository `AGENTS.md` files unless
@@ -302,6 +336,12 @@ Show help:
 
 ```sh
 pa --help
+```
+
+Preview local context without contacting a backend:
+
+```sh
+pa --context-preview "summarise what I should do today"
 ```
 
 Ask the local Ollama-backed assistant:
@@ -339,13 +379,21 @@ PA_RUNDOWN_WEATHER_LOCATION="<LOCAL_AREA>" pa morning-rundown --dry-run
 PA_RUNDOWN_WEATHER_LOCATION="<LOCAL_AREA>" pa morning-rundown
 ```
 
+For persistent weather without shell startup or crontab edits, put the location
+in:
+
+```text
+$HOME/.config/personal-assistant/weather-location
+```
+
 ## Runtime Requirements
 
 - Python 3
 - The third-party Python package `requests`, required only for real Ollama-backed prompts
 - Ollama running locally for non-coding prompts
 - Codex CLI available on `PATH` for coding-related prompts and morning rundown agents
-- Codex web search available for morning rundown news and weather agents
+- Codex web search available for the morning rundown news agent
+- Network access to Open-Meteo for optional morning rundown weather
 - A shell alias similar to:
 
 ```sh
@@ -416,6 +464,8 @@ If `pa -l` prints `Logseq capture disabled`, confirm `PA_LOGSEQ_GRAPH_DIR` point
 
 If `pa morning-rundown` prints that the Logseq graph is missing, confirm `PA_LOGSEQ_GRAPH_DIR` points at the graph root, not the `pages/` directory.
 
-If the weather source says the location is unavailable, set `PA_RUNDOWN_WEATHER_LOCATION` in the shell or crontab entry.
+If the weather source says the location is unavailable, set `PA_RUNDOWN_WEATHER_LOCATION` for that run or put the location in `$HOME/.config/personal-assistant/weather-location`.
+
+If the weather source says it failed, confirm the location can be resolved by Open-Meteo and that the machine has network access. `PA_RUNDOWN_WEATHER_TIMEOUT_SECONDS` can be raised for a slow network, but weather failures still produce a degraded rundown instead of waiting on a Codex search timeout.
 
 If the cron job does not run, confirm the crontab line uses absolute paths, includes `CRON_TZ=Europe/London` if local-time scheduling matters, and writes logs to an existing directory.
